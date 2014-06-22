@@ -497,6 +497,7 @@ end
 function handlerFrame:PLAYER_ENTERING_WORLD()
   comboTargetGUID = nil
   comboPoints = 0
+  comboPointFrame:update()
 end
 
 ------------------------------------------------------------------------------------------------------------------------
