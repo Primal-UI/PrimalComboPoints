@@ -1,4 +1,4 @@
-PrimalAnticipation = LibStub("AceAddon-3.0"):NewAddon("PrimalAnticipation", "AceEvent-3.0", "AceConsole-3.0")
+PrimalAnticipation = LibStub("AceAddon-3.0"):NewAddon("PrimalAnticipation", "AceConsole-3.0")
 PrimalAnticipation._G = _G
 
 setfenv(1, PrimalAnticipation)
@@ -83,6 +83,15 @@ local unresolvedCPEvents = {}  -- Queue.
 ------------------------------------------------------------------------------------------------------------------------
 local comboPointFrame = _G.CreateFrame("Frame", nil, _G.UIParent)
 comboPointFrame:SetSize(32, 32)
+comboPointFrame:SetClampedToScreen(true)
+comboPointFrame:SetScript("OnDragStart", function(self, button)
+  self:StartMoving()
+end)
+comboPointFrame:SetScript("OnDragStop", function(self, button)
+  self:StopMovingOrSizing()
+  db.global.xOffset, db.global.yOffset = _G.math.floor(self:GetLeft() + .5), _G.math.floor(self:GetBottom() + .5)
+  self:SetPoint("BOTTOMLEFT", db.global.xOffset, db.global.yOffset)
+end)
 
 local backdrop = {
   bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
@@ -289,8 +298,8 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(_, subEvent, _, sourceGUID, _,
         _G.assert(comboPoints)
         if comboPoints + pendingCPs < _G.MAX_COMBO_POINTS then
           pendingCPs = pendingCPs + 1
-          comboPointFrame:update()
           _G.table.insert(pendingCPEvents, PendingCPEvent:new(destGUID, spellId))
+          comboPointFrame:update()
         end
       else
         -- A combo point was added at this point.
@@ -298,8 +307,8 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(_, subEvent, _, sourceGUID, _,
       if critical then
         if comboPoints + pendingCPs < _G.MAX_COMBO_POINTS then
           pendingCPs = pendingCPs + 1
-          comboPointFrame:update()
           _G.table.insert(pendingCPEvents, PendingCPEvent:new(destGUID, spellId))
+          comboPointFrame:update()
         end
       end
     -- When we have no target and hit several units with swipe a UNIT_COMBO_POINTS event is posted for each, but the one
@@ -490,6 +499,39 @@ function handlerFrame:PLAYER_ENTERING_WORLD()
   comboPoints = 0
 end
 
+------------------------------------------------------------------------------------------------------------------------
+local AceConfig = _G.LibStub("AceConfig-3.0")
+
+local options = {
+  type = "group",
+  name = "PrimalAnticipation Options",
+  args = {
+    toggleLock = {
+      type = "toggle",
+      name = "Lock Combo Point Frame",
+      width = "full",
+      set = function(info, val)
+        comboPointFrame:EnableMouse(not val)
+        comboPointFrame:SetMovable(not val)
+        comboPointFrame:RegisterForDrag(not val and "LeftButton" or nil)
+        db.global.lock = val
+      end,
+      get = function(info) return db.global.lock end,
+      order = 100,
+    },
+  },
+}
+
+AceConfig:RegisterOptionsTable("PrimalAnticipation", options)
+
+local AceConfigDialog = _G.LibStub("AceConfigDialog-3.0")
+AceConfigDialog:SetDefaultSize("PrimalAnticipation", 800, 600)
+
+local function toggleOptionsUI()
+  AceConfigDialog:Open("PrimalAnticipation")
+end
+------------------------------------------------------------------------------------------------------------------------
+
 -- http://www.wowace.com/addons/ace3/pages/api/ace-addon-3-0/
 function PrimalAnticipation:OnInitialize()
   _G.assert(_G.MAX_COMBO_POINTS and _G.MAX_COMBO_POINTS == 5)
@@ -497,14 +539,20 @@ function PrimalAnticipation:OnInitialize()
     local defaults = {
       global = {
         sound = true,
-        xOffset = 0,
-        yOffset = 334,
+        lock = false,
       },
     }
     self.db = _G.LibStub("AceDB-3.0"):New("PrimalAnticipationDB", defaults, true)
   end
 
-  comboPointFrame:SetPoint("BOTTOM", self.db.global.xOffset, self.db.global.yOffset)
+  if not (db.global.xOffset and db.global.yOffset) then
+    comboPointFrame:SetPoint("CENTER", 0, 0)
+  else
+    comboPointFrame:SetPoint("BOTTOMLEFT", db.global.xOffset, db.global.yOffset)
+  end
+
+  self:RegisterChatCommand("primalanticipation", toggleOptionsUI)
+  self:RegisterChatCommand("pa", toggleOptionsUI)
 end
 
 -- http://www.wowace.com/addons/ace3/pages/api/ace-addon-3-0/
