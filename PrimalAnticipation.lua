@@ -119,13 +119,31 @@ comboPointFrames[3]:SetPoint("TOPRIGHT", comboPointFrame)
 comboPointFrames[4]:SetPoint("TOPLEFT", comboPointFrame)
 
 function comboPointFrame:update()
+  local comboPoints = comboPoints
   local cPOnTarget = _G.GetComboPoints("player")
+  _G.assert(cPOnTarget)
 
-  if cPOnTarget and cPOnTarget ~= 0 and comboPoints == cPOnTarget then
-    print("cPOnTarget: " .. cPOnTarget .. ", comboPoints: " .. comboPoints ", pendingCPs: " .. pendingCPs)
+  if cPOnTarget ~= 0 and comboPoints ~= cPOnTarget then
+    print("cPOnTarget: " .. cPOnTarget .. ", comboPoints: " .. comboPoints .. ", pendingCPs: " .. pendingCPs)
   end
 
   _G.assert(not cPOnTarget or cPOnTarget == 0 or comboPoints == cPOnTarget)
+
+  if cPOnTarget == 0 then
+    -- ...
+  end
+
+  local pendingCPs = 0
+  for i, pendingCPEvent in _G.ipairs(pendingCPEvents) do
+    if cPGenerators[pendingCPEvent.spellId] and pendingCPEvent.destGUID == comboTargetGUID then
+      pendingCPs = pendingCPs + 1
+    elseif finishers[pendingCPEvent.spellId] then
+      pendingCPs = cPOnTarget -- These aren't actually combo points we think we're about to lose.
+      comboPoints = 0
+      cPOnTarget = 0
+      break
+    end
+  end
 
   for i = 1, cPOnTarget do
     comboPointFrames[i]:SetBackdropColor(1, 1, 1, .75)
@@ -171,8 +189,9 @@ local PendingCPEvent = {
   expires = 1, -- Expires after a second.
 }
 
-function PendingCPEvent:new(spellId)
+function PendingCPEvent:new(destGUID, spellId)
   local object = _G.setmetatable({}, { __index = self })
+  object.destGUID = destGUID
   object.spellId = spellId
   return object
 end
@@ -223,9 +242,9 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(_, subEvent, _, sourceGUID, _,
     local spellId, spellName, _ = ...
     if savageRoar[spellId] then
       print(subEvent .. ", " .. spellId .. " (" .. spellName .. ")")
-      comboTargetGUID = nil
-      comboPoints = 0
-      _G.table.insert(pendingCPEvents, PendingCPEvent:new(spellId))
+      --comboTargetGUID = nil
+      --comboPoints = 0
+      _G.table.insert(pendingCPEvents, PendingCPEvent:new(destGUID, spellId))
       comboPointFrame:update()
     --[[
     elseif pounce[spellId] then
@@ -271,7 +290,7 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(_, subEvent, _, sourceGUID, _,
         if comboPoints + pendingCPs < _G.MAX_COMBO_POINTS then
           pendingCPs = pendingCPs + 1
           comboPointFrame:update()
-          _G.table.insert(pendingCPEvents, PendingCPEvent:new(spellId))
+          _G.table.insert(pendingCPEvents, PendingCPEvent:new(destGUID, spellId))
         end
       else
         -- A combo point was added at this point.
@@ -280,7 +299,7 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(_, subEvent, _, sourceGUID, _,
         if comboPoints + pendingCPs < _G.MAX_COMBO_POINTS then
           pendingCPs = pendingCPs + 1
           comboPointFrame:update()
-          _G.table.insert(pendingCPEvents, PendingCPEvent:new(spellId))
+          _G.table.insert(pendingCPEvents, PendingCPEvent:new(destGUID, spellId))
         end
       end
     -- When we have no target and hit several units with swipe a UNIT_COMBO_POINTS event is posted for each, but the one
@@ -334,7 +353,7 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(_, subEvent, _, sourceGUID, _,
         comboPoints = 0
         comboPointFrame:update()
       else
-        _G.assert(nil)
+        _G.assert(false)
       end
       print(debuggingOutput)
     end
@@ -363,7 +382,7 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(_, subEvent, _, sourceGUID, _,
         comboPoints = 0
         comboPointFrame:update()
       else
-        _G.assert(nil)
+        _G.assert(false)
       end
       print(debuggingOutput)
     end
@@ -389,7 +408,8 @@ function handlerFrame:UNIT_COMBO_POINTS(unit)
       pendingCPs = pendingCPs - 1
       comboPoints = comboPoints + 1
     elseif finishers[spellId] then
-      --comboPoints = 0
+      comboTargetGUID = nil
+      comboPoints = 0
     else
       _G.assert(nil)
     end
