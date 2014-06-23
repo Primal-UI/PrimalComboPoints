@@ -138,15 +138,12 @@ function comboPointFrame:update()
 
   _G.assert(not cPOnTarget or cPOnTarget == 0 or comboPoints == cPOnTarget)
 
-  if cPOnTarget == 0 then
-    -- ...
-  end
-
   local pendingCPs = 0
   for i, pendingCPEvent in _G.ipairs(pendingCPEvents) do
-    if cPGenerators[pendingCPEvent.spellId] and pendingCPEvent.destGUID == comboTargetGUID then
+    local spellId = pendingCPEvent.spellId
+    if cPGenerators[spellId] or primalFury[spellId] and pendingCPEvent.destGUID == comboTargetGUID then
       pendingCPs = pendingCPs + 1
-    elseif finishers[pendingCPEvent.spellId] then
+    elseif finishers[spellId] then
       pendingCPs = cPOnTarget -- These aren't actually combo points we think we're about to lose.
       comboPoints = 0
       cPOnTarget = 0
