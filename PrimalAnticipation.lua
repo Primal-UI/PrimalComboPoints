@@ -136,19 +136,26 @@ function comboPointFrame:update()
     print("cPOnTarget: " .. cPOnTarget .. ", comboPoints: " .. comboPoints .. ", pendingCPs: " .. pendingCPs)
   end
 
-  _G.assert(not cPOnTarget or cPOnTarget == 0 or comboPoints == cPOnTarget)
+  _G.assert(cPOnTarget == 0 or comboPoints == cPOnTarget)
 
-  local pendingCPs = 0
+  local pendingCPs, pendingCPsCheck = pendingCPs, 0
   for i, pendingCPEvent in _G.ipairs(pendingCPEvents) do
     local spellId = pendingCPEvent.spellId
     if cPGenerators[spellId] or primalFury[spellId] and pendingCPEvent.destGUID == comboTargetGUID then
-      pendingCPs = pendingCPs + 1
+      pendingCPsCheck = pendingCPsCheck + 1
     elseif finishers[spellId] then
       pendingCPs = cPOnTarget -- These are actually combo points we think we're about to lose.
       comboPoints = 0
       cPOnTarget = 0
       break
     end
+  end
+
+  if comboPoints == 0 or pendingCPsCheck == pendingCPs then
+
+  else
+    print("pendingCPsCheck == " .. pendingCPsCheck .. " and pendingCPs == " .. pendingCPs)
+    _G.assert(false)
   end
 
   for i = 1, cPOnTarget do
@@ -350,11 +357,11 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(_, subEvent, _, sourceGUID, _,
       if cPEvents[1] then
         debuggingOutput = debuggingOutput .. ", cPEvents[1] removed after " ..
                           (1 - cPEvents[1].expires)
-        _G.table.remove(cPEvents, 1)
         if not cPEvents[1].resolved then
           comboTargetGUID = nil
           comboPoints = 0
         end
+        _G.table.remove(cPEvents, 1)
         comboPointFrame:update()
       else
         _G.assert(false)
@@ -381,11 +388,11 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(_, subEvent, _, sourceGUID, _,
     elseif rip[spellId] then -- UNIT_COMBO_POINTS is posted before SPELL_AURA_APPLIED and SPELL_AURA_REFRESH for Rip.
       if cPEvents[1] then
         debuggingOutput = debuggingOutput .. ", cPEvents[1] removed after " ..  (1 - cPEvents[1].expires)
-        _G.table.remove(cPEvents, 1)
         if not cPEvents[1].resolved then
           comboTargetGUID = nil
           comboPoints = 0
         end
+        _G.table.remove(cPEvents, 1)
         comboPointFrame:update()
       else
         _G.assert(false)
@@ -412,10 +419,8 @@ function handlerFrame:UNIT_COMBO_POINTS(unit)
         comboTarget = unitID
         comboTargetGUID = _G.UnitGUID(unitID)
         comboPoints = comboPointsOnUnit
-        if not resolved then
-          resolved = true
-          debuggingOutput = debuggingOutput .. ", resolved"
-        end
+        resolved = true
+        debuggingOutput = debuggingOutput .. ", resolved"
         debuggingOutput = debuggingOutput .. ", \"" .. comboTarget .. "\" is combo target"
       -- Looks like that's not really the combo target. Might have been a finisher or we added a combo point to
       -- another unit. Or the combo target was dead long enough for our combo points to be purged.
@@ -434,7 +439,9 @@ function handlerFrame:UNIT_COMBO_POINTS(unit)
       (1 - pendingCPEvents[1].expires)
     if cPGenerators[spellId] or primalFury[spellId] then
       pendingCPs = pendingCPs - 1
-      comboPoints = comboPoints + 1
+      if not resolved then
+        comboPoints = comboPoints + 1
+      end
     elseif finishers[spellId] then
       comboTargetGUID = nil
       comboPoints = 0
