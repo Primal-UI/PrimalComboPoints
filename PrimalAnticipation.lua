@@ -237,7 +237,10 @@ handlerFrame:SetScript("OnUpdate", function(self, elapsed)
   for i, pendingCPEvent in _G.ipairs(pendingCPEvents) do
     pendingCPEvent.expires = pendingCPEvent.expires - elapsed
     if pendingCPEvent.expires <= 0 then
-      pendingCPs = pendingCPs - 1
+      local spellId = pendingCPEvent.spellId
+      if cPGenerators[spellId] or primalFury[spellId] then
+        pendingCPs = pendingCPs - 1
+      end
       _G.table.remove(pendingCPEvents, i)
       print("pendingCPEvent[" .. i .. "] expired")
       comboPointFrame:update()
@@ -257,6 +260,8 @@ handlerFrame:SetScript("OnUpdate", function(self, elapsed)
     end
   end
 end)
+
+local timestamp
 
 -- http://wowpedia.org/API_COMBAT_LOG_EVENT
 function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(_, subEvent, _, sourceGUID, _, _, _, destGUID, _, _, _, ...)
@@ -307,7 +312,7 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(_, subEvent, _, sourceGUID, _,
         comboPointFrame:update()
       end
       print(debuggingOutput)
-    -- When we have no target and hit several units with swipe a UNIT_COMBO_POINTS event is posted for each, but the one
+    -- When we have no target and hit several units with Swipe a UNIT_COMBO_POINTS event is posted for each, but the one
     -- we hit first will be our combo target. UNIT_COMBO_POINTS is posted before SPELL_DAMAGE for Swipe.
     elseif swipe[spellId] then
       debuggingOutput = subEvent .. ", " .. spellId .. " (" .. spellName .. ")"
@@ -317,39 +322,38 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(_, subEvent, _, sourceGUID, _,
           if cPEvents[1] then
             if comboPoints + pendingCPs < _G.MAX_COMBO_POINTS then
               debuggingOutput = debuggingOutput .. ", cPEvents[1] removed after " ..  (1 - cPEvents[1].expires)
-              print(debuggingOutput)
               if not cPEvents[1].resolved then
+                debuggingOutput = debuggingOutput .. ", applied"
                 comboPoints = comboPoints + 1
               end
               _G.table.remove(cPEvents, 1)
               comboPointFrame:update()
             end
           end
-        -- We hit a unit that isn't our combo target with swipe. We previously had no combo target because we have one
-        -- combo point now; this means UNIT_COMBO_POINTS was posted for hitting this unit.
-        elseif comboPoints == 1 then
-            if cPEvents[1] then
-              debuggingOutput = debuggingOutput .. ", cPEvents[1] removed after " ..
-                                (1 - cPEvents[1].expires)
-              print(debuggingOutput)
-              _G.table.remove(cPEvents, 1)
-            end
+        -- We hit a unit that isn't our combo target with swipe.
+        elseif comboPoints == 1 and timestamp and timestamp == _G.GetTime() then
+          if cPEvents[1] then
+            debuggingOutput = debuggingOutput .. ", cPEvents[1] removed after " ..  (1 - cPEvents[1].expires)
+            _G.table.remove(cPEvents, 1)
           end
+        end
       else--[[if not comboTargetGUID then]]
         comboTargetGUID = destGUID
         debuggingOutput = debuggingOutput .. (destGUID == comboTargetGUID and ", combo target" or "")
         if cPEvents[1] then
           if comboPoints + pendingCPs < _G.MAX_COMBO_POINTS then
             debuggingOutput = debuggingOutput .. ", cPEvents[1] removed after " ..  (1 - cPEvents[1].expires)
-            print(debuggingOutput)
             if not cPEvents[1].resolved then
+              debuggingOutput = debuggingOutput .. ", applied"
               comboPoints = 1
+              timestamp = _G.GetTime()
             end
             _G.table.remove(cPEvents, 1)
             comboPointFrame:update()
           end
         end
       end
+      print(debuggingOutput)
     -- UNIT_COMBO_POINTS is posted before SPELL_DAMAGE for Ferocious Bite and Main. For finishers, we can never directly
     -- resolve UNIT_COMBO_POINTS.
     elseif ferociousBite[spellId] or maim[spellId] then
@@ -410,18 +414,17 @@ end
 function handlerFrame:UNIT_COMBO_POINTS(unit)
   local debuggingOutput = ""
   local resolved = false
-  local comboTarget
 
   for _, unitID in _G.ipairs(unitIDs) do
     if _G.UnitExists(unitID) then
       local comboPointsOnUnit = _G.GetComboPoints("player", unitID)
       if comboPointsOnUnit > 0 then -- We have combo points on this unit.
-        comboTarget = unitID
-        comboTargetGUID = _G.UnitGUID(unitID)
+        if not _G.UnitIsDead(unitID) then
+          comboTargetGUID = _G.UnitGUID(unitID)
+        end
         comboPoints = comboPointsOnUnit
         resolved = true
         debuggingOutput = debuggingOutput .. ", resolved"
-        debuggingOutput = debuggingOutput .. ", \"" .. comboTarget .. "\" is combo target"
       -- Looks like that's not really the combo target. Might have been a finisher or we added a combo point to
       -- another unit. Or the combo target was dead long enough for our combo points to be purged.
       elseif _G.UnitGUID(unitID) == comboTargetGUID then
@@ -466,7 +469,9 @@ end
 function handlerFrame:PLAYER_TARGET_CHANGED(cause)
   local comboPointsOnUnit = _G.GetComboPoints("player", "target")
   if comboPointsOnUnit > 0 then
-    comboTargetGUID = _G.UnitGUID("target")
+    if not _G.UnitIsDead("target") then
+      comboTargetGUID = _G.UnitGUID("target")
+    end
     comboPoints = comboPointsOnUnit
   end
   comboPointFrame:update() -- We want to also update the display when we lost our target.
@@ -475,7 +480,9 @@ end
 function handlerFrame:PLAYER_FOCUS_CHANGED()
   local comboPointsOnUnit = _G.GetComboPoints("player", "focus")
   if comboPointsOnUnit > 0 then
-    comboTargetGUID = _G.UnitGUID("focus")
+    if not _G.UnitIsDead("focus") then
+      comboTargetGUID = _G.UnitGUID("focus")
+    end
     comboPoints = comboPointsOnUnit
     comboPointFrame:update()
   end
@@ -484,7 +491,9 @@ end
 function handlerFrame:UPDATE_MOUSEOVER_UNIT()
   local comboPointsOnUnit = _G.GetComboPoints("player", "mouseover")
   if comboPointsOnUnit > 0 then
-    comboTargetGUID = _G.UnitGUID("mouseover")
+    if not _G.UnitIsDead("mouseover") then
+      comboTargetGUID = _G.UnitGUID("mouseover")
+    end
     comboPoints = comboPointsOnUnit
     comboPointFrame:update()
   end
@@ -493,7 +502,9 @@ end
 function handlerFrame:ARENA_OPPONENT_UPDATE(unit, eventType)
   local comboPointsOnUnit = _G.GetComboPoints("player", unit)
   if comboPointsOnUnit > 0 then
-    comboTargetGUID = _G.UnitGUID(unit)
+    if not _G.UnitIsDead(unit) then
+      comboTargetGUID = _G.UnitGUID(unit)
+    end
     comboPoints = comboPointsOnUnit
     comboPointFrame:update()
   end
