@@ -5,10 +5,8 @@ setfenv(1, PrimalAnticipation)
 
 local PrimalAnticipation = _G.PrimalAnticipation
 
-local debug = true
-
 local function print(...)
-  if debug then _G.print(...) end
+  --_G.print(...)
 end
 
 mangle = {
