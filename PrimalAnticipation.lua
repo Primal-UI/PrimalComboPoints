@@ -80,6 +80,7 @@ local comboTargetGUID    = nil -- GUID of the unit we ASSUME to be our combo tar
                                -- no unitID. The combo target is the unique unit we have more than 0 combo points on.
 local comboPoints        = 0   -- Number of combo points we THINK we have.
 local pendingCPs         = 0   -- Number of combo points we THINK we'll have soon.
+local unitsSwiped        = 0
 local pendingCPEvents    = {}  -- Queue.
 local cPEvents           = {}  -- Queue.
 ------------------------------------------------------------------------------------------------------------------------
@@ -195,8 +196,10 @@ local PendingCPEvent = {
   expires = 1, -- Expires after a second.
 }
 
+PendingCPEvent.__index = PendingCPEvent
+
 function PendingCPEvent:new(destGUID, spellId)
-  local object = _G.setmetatable({}, { __index = self })
+  local object = _G.setmetatable({}, PendingCPEvent)
   object.destGUID = destGUID
   object.spellId = spellId
   return object
@@ -208,15 +211,12 @@ local CPEvent = {
   expires = 1, -- Expires after a second.
 }
 
+CPEvent.__index = CPEvent
+
 function CPEvent:new(resolved)
-  local object = _G.setmetatable({}, { __index = self })
+  local object = _G.setmetatable({}, CPEvent)
   object.resolved = resolved
   return object
-end
-
-function CPEvent:delete()
-  _G.assert(self == cPEvents[1])
-  _G.table.remove(cPEvents, 1)
 end
 ------------------------------------------------------------------------------------------------------------------------
 
