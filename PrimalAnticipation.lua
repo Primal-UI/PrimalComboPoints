@@ -75,7 +75,7 @@ local unitIDs = {"target", "focus", "mouseover", "arena1", "arena2", "arena3", "
 local comboTargetGUID    = nil -- GUID of the unit we ASSUME to be our combo target. We may have a combo target that has
                                -- no unitID. The combo target is the unique unit we have more than 0 combo points on.
 local comboPoints        = 0   -- Number of combo points we THINK we have.
-local pendingCPs         = 0   -- Number of combo points we didn't see a UNIT_COMBO_POINTS event for yet.
+local pendingCPs         = 0   -- Number of combo points we THINK we'll have soon.
 local pendingCPEvents    = {}  -- Queue.
 local cPEvents           = {}  -- Queue.
 ------------------------------------------------------------------------------------------------------------------------
@@ -128,7 +128,6 @@ comboPointFrames[3]:SetPoint("TOPRIGHT", comboPointFrame)
 comboPointFrames[4]:SetPoint("TOPLEFT", comboPointFrame)
 
 function comboPointFrame:update()
-  local comboPoints = comboPoints
   local cPOnTarget = _G.GetComboPoints("player")
   _G.assert(cPOnTarget)
 
@@ -138,44 +137,34 @@ function comboPointFrame:update()
 
   _G.assert(cPOnTarget == 0 or comboPoints == cPOnTarget)
 
-  local pendingCPs, pendingCPsCheck = pendingCPs, 0
-  for i, pendingCPEvent in _G.ipairs(pendingCPEvents) do
-    local spellId = pendingCPEvent.spellId
-    if cPGenerators[spellId] or primalFury[spellId] and pendingCPEvent.destGUID == comboTargetGUID then
-      pendingCPsCheck = pendingCPsCheck + 1
-    elseif finishers[spellId] then
-      pendingCPs = cPOnTarget -- These are actually combo points we think we're about to lose.
-      comboPoints = 0
-      cPOnTarget = 0
-      break
-    end
-  end
+  _G.assert(comboPoints <= _G.MAX_COMBO_POINTS)
+  _G.assert(pendingCPs <= _G.MAX_COMBO_POINTS)
 
-  if comboPoints == 0 or pendingCPsCheck == pendingCPs then
-
-  else
-    print("pendingCPsCheck == " .. pendingCPsCheck .. " and pendingCPs == " .. pendingCPs)
-    _G.assert(false)
-  end
-
-  for i = 1, cPOnTarget do
-    comboPointFrames[i]:SetBackdropColor(1, 1, 1, .75)
-    comboPointFrames[i]:SetBackdropBorderColor(0, 0, 0)
-  end
-  for i = cPOnTarget + 1, comboPoints + pendingCPs do
-    comboPointFrames[i]:SetBackdropColor(.75, .75, .75, .5)
-    comboPointFrames[i]:SetBackdropBorderColor(0, 0, 0)
-  end
-  for i = comboPoints + pendingCPs + 1, _G.MAX_COMBO_POINTS - 1 do
+  for i = 1, _G.MAX_COMBO_POINTS - 1 do
     comboPointFrames[i]:SetBackdropColor(0, 0, 0, .25)
     comboPointFrames[i]:SetBackdropBorderColor(0, 0, 0)
   end
-  if comboPoints + pendingCPs == _G.MAX_COMBO_POINTS then
+  if cPOnTarget <= pendingCPs then
+    for i = 1, cPOnTarget do
+      comboPointFrames[i]:SetBackdropColor(1, 1, 1, .75)
+      comboPointFrames[i]:SetBackdropBorderColor(0, 0, 0)
+    end
+    for i = cPOnTarget + 1, pendingCPs do
+      comboPointFrames[i]:SetBackdropColor(.75, .75, .75, .5)
+      comboPointFrames[i]:SetBackdropBorderColor(0, 0, 0)
+    end
+  else--[[if pendingCPs < cPOnTarget then]]
+    for i = 1, cPOnTarget do
+      comboPointFrames[i]:SetBackdropColor(.75, .75, .75, .5)
+      comboPointFrames[i]:SetBackdropBorderColor(0, 0, 0)
+    end
+  end
+
+  if pendingCPs == _G.MAX_COMBO_POINTS or cPOnTarget == _G.MAX_COMBO_POINTS then
     if not comboPointFrames[5]:IsShown() then
       if db.global.sound then
         local file = [[Interface\AddOns\PrimalAnticipation\media\sounds\noisecrux\vio]] .. _G.math.random(10) .. ".ogg"
-        _G.assert(file)
-        --[[_G.assert(]]_G.PlaySoundFile(file, "Master")--)
+        _G.PlaySoundFile(file, "Master")
       end
       comboPointFrames[5]:Show()
     end
@@ -234,6 +223,7 @@ handlerFrame:SetScript("OnEvent", function(self, event, ...)
 end)
 
 handlerFrame:SetScript("OnUpdate", function(self, elapsed)
+  --_G.assert(not pendingCPEvents[1] or not cPEvents[1]) -- TODO: this should hold, right?
   for i, pendingCPEvent in _G.ipairs(pendingCPEvents) do
     pendingCPEvent.expires = pendingCPEvent.expires - elapsed
     if pendingCPEvent.expires <= 0 then
@@ -249,11 +239,11 @@ handlerFrame:SetScript("OnUpdate", function(self, elapsed)
   for i, cPEvent in _G.ipairs(cPEvents) do
     cPEvent.expires = cPEvent.expires - elapsed
     if cPEvent.expires <= 0 then
-      _G.assert(i == 1)
       print("cPEvents[" .. i .. "] expired")
       if not cPEvent.resolved then
         comboTargetGUID = nil
         comboPoints = 0
+        pendingCPs = 0
       end
       _G.table.remove(cPEvents, i)
       comboPointFrame:update()
@@ -269,6 +259,7 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(_, subEvent, _, sourceGUID, _,
     local spellId, spellName, _ = ...
     if savageRoar[spellId] then
       print(subEvent .. ", " .. spellId .. " (" .. spellName .. ")")
+      pendingCPs = 0
       _G.table.insert(pendingCPEvents, PendingCPEvent:new(destGUID, spellId))
       comboPointFrame:update()
     --[[
@@ -288,28 +279,41 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(_, subEvent, _, sourceGUID, _,
     if cPGenerators[spellId] then -- We got a hit with one of our single-target combo moves.
       debuggingOutput = debuggingOutput .. subEvent .. ", " .. spellId .. " (" .. spellName .. ")" ..
                         (critical and ", critical" or "")
-      comboTargetGUID = destGUID
       if mangle[spellId] then
         _G.assert(comboPoints)
-        if comboPoints + pendingCPs < _G.MAX_COMBO_POINTS then
+        if not comboTargetGUID or destGUID ~= comboTargetGUID then
+          pendingCPs = 1
+          comboPointFrame:update()
+        elseif pendingCPs < _G.MAX_COMBO_POINTS then
           pendingCPs = pendingCPs + 1
-          _G.table.insert(pendingCPEvents, PendingCPEvent:new(destGUID, spellId))
           comboPointFrame:update()
         end
+        _G.table.insert(pendingCPEvents, PendingCPEvent:new(destGUID, spellId))
       else -- One UNIT_COMBO_POINTS event was posted at this point.
-        if cPEvents[1] and comboPoints + pendingCPs < _G.MAX_COMBO_POINTS then
-          debuggingOutput = debuggingOutput .. ", cPEvents[1] removed after " ..  (1 - cPEvents[1].expires)
+        if cPEvents[1] then
+          _G.assert(not pendingCPEvents[1])
+          debuggingOutput = debuggingOutput .. ", cPEvents[1] removed after " ..
+                            _G.string.format("%.3f", (1 - cPEvents[1].expires))
           if not cPEvents[1].resolved then
-            comboPoints = comboPoints + 1
+            if not comboTargetGUID or destGUID ~= comboTargetGUID then
+              comboTargetGUID = destGUID
+              comboPoints = 1
+              pendingCPs = 1
+            elseif pendingCPs < _G.MAX_COMBO_POINTS then
+              comboPoints = comboPoints + 1
+              pendingCPs = pendingCPs + 1
+            end
           end
           _G.table.remove(cPEvents, 1)
           comboPointFrame:update()
         end
       end
-      if critical and comboPoints + pendingCPs < _G.MAX_COMBO_POINTS then
-        pendingCPs = pendingCPs + 1
+      if critical then
         _G.table.insert(pendingCPEvents, PendingCPEvent:new(destGUID, 16953 --[[ Primal Fury ]]))
-        comboPointFrame:update()
+        if pendingCPs < _G.MAX_COMBO_POINTS then
+          pendingCPs = pendingCPs + 1
+          comboPointFrame:update()
+        end
       end
       print(debuggingOutput)
     -- When we have no target and hit several units with Swipe a UNIT_COMBO_POINTS event is posted for each, but the one
@@ -318,39 +322,44 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(_, subEvent, _, sourceGUID, _,
       debuggingOutput = subEvent .. ", " .. spellId .. " (" .. spellName .. ")"
       if comboTargetGUID then
         if destGUID == comboTargetGUID then -- We hit our combo target with Swipe.
-          debuggingOutput = debuggingOutput .. (destGUID == comboTargetGUID and ", combo target" or "")
+          debuggingOutput = debuggingOutput .. (destGUID == comboTargetGUID and ", combo target hit" or "")
           if cPEvents[1] then
-            if comboPoints + pendingCPs < _G.MAX_COMBO_POINTS then
-              debuggingOutput = debuggingOutput .. ", cPEvents[1] removed after " ..  (1 - cPEvents[1].expires)
+            _G.assert(not pendingCPEvents[1])
+            debuggingOutput = debuggingOutput .. ", cPEvents[1] removed after " ..
+                              _G.string.format("%.3f", (1 - cPEvents[1].expires))
+            if pendingCPs < _G.MAX_COMBO_POINTS then
               if not cPEvents[1].resolved then
                 debuggingOutput = debuggingOutput .. ", applied"
                 comboPoints = comboPoints + 1
+                pendingCPs = pendingCPs + 1
               end
-              _G.table.remove(cPEvents, 1)
-              comboPointFrame:update()
-            end
-          end
-        -- We hit a unit that isn't our combo target with swipe.
-        elseif comboPoints == 1 and timestamp and timestamp == _G.GetTime() then
-          if cPEvents[1] then
-            debuggingOutput = debuggingOutput .. ", cPEvents[1] removed after " ..  (1 - cPEvents[1].expires)
-            _G.table.remove(cPEvents, 1)
-          end
-        end
-      else--[[if not comboTargetGUID then]]
-        comboTargetGUID = destGUID
-        debuggingOutput = debuggingOutput .. (destGUID == comboTargetGUID and ", combo target" or "")
-        if cPEvents[1] then
-          if comboPoints + pendingCPs < _G.MAX_COMBO_POINTS then
-            debuggingOutput = debuggingOutput .. ", cPEvents[1] removed after " ..  (1 - cPEvents[1].expires)
-            if not cPEvents[1].resolved then
-              debuggingOutput = debuggingOutput .. ", applied"
-              comboPoints = 1
-              timestamp = _G.GetTime()
             end
             _G.table.remove(cPEvents, 1)
             comboPointFrame:update()
           end
+        -- We hit a unit that isn't our combo target but the same Swipe added the first combo point to our combo target.
+        elseif comboPoints == 1 and timestamp and timestamp == _G.GetTime() then
+          if cPEvents[1] then
+            _G.assert(not pendingCPEvents[1])
+            debuggingOutput = debuggingOutput .. ", cPEvents[1] removed after " ..
+                              _G.string.format("%.3f", (1 - cPEvents[1].expires))
+            _G.table.remove(cPEvents, 1)
+          end
+        end
+      else--[[if not comboTargetGUID then]]
+        if cPEvents[1] then
+          _G.assert(not pendingCPEvents[1])
+          comboTargetGUID = destGUID
+          debuggingOutput = debuggingOutput .. ", combo target acquired, cPEvents[1] removed after " ..
+                            _G.string.format("%.3f", (1 - cPEvents[1].expires))
+          if not cPEvents[1].resolved then
+            debuggingOutput = debuggingOutput .. ", applied"
+            comboPoints = 1
+            pendingCPs = 1
+            timestamp = _G.GetTime()
+          end
+          _G.table.remove(cPEvents, 1)
+          comboPointFrame:update()
         end
       end
       print(debuggingOutput)
@@ -359,11 +368,13 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(_, subEvent, _, sourceGUID, _,
     elseif ferociousBite[spellId] or maim[spellId] then
       debuggingOutput = subEvent .. ", " .. spellId .. " (" .. spellName .. ")"
       if cPEvents[1] then
+        _G.assert(not pendingCPEvents[1])
         debuggingOutput = debuggingOutput .. ", cPEvents[1] removed after " ..
-                          (1 - cPEvents[1].expires)
+                          _G.string.format("%.3f", (1 - cPEvents[1].expires))
         if not cPEvents[1].resolved then
           comboTargetGUID = nil
           comboPoints = 0
+          pendingCPs = 0
         end
         _G.table.remove(cPEvents, 1)
         comboPointFrame:update()
@@ -377,11 +388,16 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(_, subEvent, _, sourceGUID, _,
     local spellId, spellName, _, _, _ = ...
     debuggingOutput = subEvent .. ", " .. spellId .. " (" .. spellName .. ")"
     if pounce[spellId] then -- UNIT_COMBO_POINTS is posted before SPELL_AURA_APPLIED and SPELL_AURA_REFRESH for Pounce.
-      comboTargetGUID = destGUID
-      if cPEvents[1] and comboPoints + pendingCPs < _G.MAX_COMBO_POINTS then
-        debuggingOutput = debuggingOutput .. ", cPEvents[1] removed after " ..  (1 - cPEvents[1].expires)
-        if not cPEvents[1].resolved then
-          comboPoints = comboPoints + 1
+      if cPEvents[1] then
+        _G.assert(not pendingCPEvents[1])
+        comboTargetGUID = destGUID
+        debuggingOutput = debuggingOutput .. ", cPEvents[1] removed after " ..
+                          _G.string.format("%.3f", (1 - cPEvents[1].expires))
+        if pendingCPs < _G.MAX_COMBO_POINTS then
+          if not cPEvents[1].resolved then
+            comboPoints = comboPoints + 1
+            pendingCPs = pendingCPs + 1
+          end
         end
         _G.table.remove(cPEvents, 1)
         comboPointFrame:update()
@@ -391,10 +407,12 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(_, subEvent, _, sourceGUID, _,
       print(debuggingOutput)
     elseif rip[spellId] then -- UNIT_COMBO_POINTS is posted before SPELL_AURA_APPLIED and SPELL_AURA_REFRESH for Rip.
       if cPEvents[1] then
-        debuggingOutput = debuggingOutput .. ", cPEvents[1] removed after " ..  (1 - cPEvents[1].expires)
+        debuggingOutput = debuggingOutput .. ", cPEvents[1] removed after " ..
+                          _G.string.format("%.3f", (1 - cPEvents[1].expires))
         if not cPEvents[1].resolved then
           comboTargetGUID = nil
           comboPoints = 0
+          pendingCPs = 0
         end
         _G.table.remove(cPEvents, 1)
         comboPointFrame:update()
@@ -437,14 +455,21 @@ function handlerFrame:UNIT_COMBO_POINTS(unit)
 
   if pendingCPEvents[1] then
     local pendingCPEvent = pendingCPEvents[1]
+    local destGUID = pendingCPEvent.destGUID
     local spellId = pendingCPEvent.spellId
     debuggingOutput = debuggingOutput .. ", for " .. pendingCPEvents[1].spellId .. ", after " ..
-      (1 - pendingCPEvents[1].expires)
-    if cPGenerators[spellId] or primalFury[spellId] then
-      pendingCPs = pendingCPs - 1
+                      _G.string.format("%.3f", (1 - pendingCPEvents[1].expires))
+    if mangle[spellId] or primalFury[spellId] then
       if not resolved then
-        comboPoints = comboPoints + 1
+        if not comboTargetGUID then
+          comboPoints = 1
+        elseif destGUID ~= comboTargetGUID then
+          comboPoints = 1
+        elseif comboPoints < _G.MAX_COMBO_POINTS then
+          comboPoints = comboPoints + 1
+        end
       end
+      comboTargetGUID = destGUID
     elseif finishers[spellId] then
       comboTargetGUID = nil
       comboPoints = 0
@@ -455,6 +480,10 @@ function handlerFrame:UNIT_COMBO_POINTS(unit)
     resolved = true
   else
     _G.table.insert(cPEvents, CPEvent:new(resolved))
+  end
+
+  if not pendingCPEvents[1] then
+    pendingCPs = comboPoints
   end
 
   if not resolved then
@@ -473,6 +502,9 @@ function handlerFrame:PLAYER_TARGET_CHANGED(cause)
       comboTargetGUID = _G.UnitGUID("target")
     end
     comboPoints = comboPointsOnUnit
+    if not pendingCPEvents[1] then
+      pendingCPs = comboPoints
+    end
   end
   comboPointFrame:update() -- We want to also update the display when we lost our target.
 end
@@ -484,6 +516,9 @@ function handlerFrame:PLAYER_FOCUS_CHANGED()
       comboTargetGUID = _G.UnitGUID("focus")
     end
     comboPoints = comboPointsOnUnit
+    if not pendingCPEvents[1] then
+      pendingCPs = comboPoints
+    end
     comboPointFrame:update()
   end
 end
@@ -495,6 +530,9 @@ function handlerFrame:UPDATE_MOUSEOVER_UNIT()
       comboTargetGUID = _G.UnitGUID("mouseover")
     end
     comboPoints = comboPointsOnUnit
+    if not pendingCPEvents[1] then
+      pendingCPs = comboPoints
+    end
     comboPointFrame:update()
   end
 end
@@ -506,6 +544,9 @@ function handlerFrame:ARENA_OPPONENT_UPDATE(unit, eventType)
       comboTargetGUID = _G.UnitGUID(unit)
     end
     comboPoints = comboPointsOnUnit
+    if not pendingCPEvents[1] then
+      pendingCPs = comboPoints
+    end
     comboPointFrame:update()
   end
 end
@@ -513,6 +554,7 @@ end
 function handlerFrame:PLAYER_ENTERING_WORLD()
   comboTargetGUID = nil
   comboPoints = 0
+  pendingCPs = 0
   comboPointFrame:update()
 end
 
