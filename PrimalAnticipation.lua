@@ -20,6 +20,10 @@ pounce = {
   [102546] = true, -- Pounce (Incarnation)
 }
 
+pounceBleed = {
+  [9007] = true,
+}
+
 cPGenerators = {
   [1822]   = true, -- Rake
   [5221]   = true, -- Shred
@@ -32,7 +36,7 @@ cPGenerators = {
 }
 
 rip = {
-  [1079]   = true, -- Rip
+  [1079] = true, -- Rip
 }
 
 ferociousBite = {
@@ -257,11 +261,17 @@ local timestamp
 function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(_, subEvent, _, sourceGUID, _, _, _, destGUID, _, _, _, ...)
   if subEvent == "SPELL_CAST_SUCCESS" and sourceGUID == _G.UnitGUID("player") then
     local spellId, spellName, _ = ...
+    local debuggingOutput = ""
     if savageRoar[spellId] then
-      print(subEvent .. ", " .. spellId .. " (" .. spellName .. ")")
+      debuggingOutput = debuggingOutput .. subEvent .. ", " .. spellId .. " (" .. spellName .. ")"
       pendingCPs = 0
       _G.table.insert(pendingCPEvents, PendingCPEvent:new(destGUID, spellId))
       comboPointFrame:update()
+      print(debuggingOutput)
+    elseif swipe[spellId] then
+      debuggingOutput = debuggingOutput .. subEvent .. ", " .. spellId .. " (" .. spellName .. ")"
+      unitsSwiped = 0
+      print(debuggingOutput)
     --[[
     elseif pounce[spellId] then
       -- ...
@@ -338,7 +348,7 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(_, subEvent, _, sourceGUID, _,
             comboPointFrame:update()
           end
         -- We hit a unit that isn't our combo target but the same Swipe added the first combo point to our combo target.
-        elseif comboPoints == 1 and timestamp and timestamp == _G.GetTime() then
+        elseif comboPoints == 1 and --[[timestamp and timestamp == _G.GetTime()]] unitsSwiped > 0 then
           if cPEvents[1] then
             _G.assert(not pendingCPEvents[1])
             debuggingOutput = debuggingOutput .. ", cPEvents[1] removed after " ..
@@ -356,12 +366,13 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(_, subEvent, _, sourceGUID, _,
             debuggingOutput = debuggingOutput .. ", applied"
             comboPoints = 1
             pendingCPs = 1
-            timestamp = _G.GetTime()
+            --timestamp = _G.GetTime()
           end
           _G.table.remove(cPEvents, 1)
           comboPointFrame:update()
         end
       end
+      unitsSwiped = unitsSwiped + 1
       print(debuggingOutput)
     -- UNIT_COMBO_POINTS is posted before SPELL_DAMAGE for Ferocious Bite and Main. For finishers, we can never directly
     -- resolve UNIT_COMBO_POINTS.
@@ -387,7 +398,9 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(_, subEvent, _, sourceGUID, _,
   then
     local spellId, spellName, _, _, _ = ...
     debuggingOutput = subEvent .. ", " .. spellId .. " (" .. spellName .. ")"
-    if pounce[spellId] then -- UNIT_COMBO_POINTS is posted before SPELL_AURA_APPLIED and SPELL_AURA_REFRESH for Pounce.
+    -- By checking for Pounce Bleed instead or Pouce we don't run into trouble when the target has full Stun DR.
+    -- UNIT_COMBO_POINTS is posted before SPELL_AURA_APPLIED and SPELL_AURA_REFRESH for Pounce (Bleed).
+    if pounceBleed[spellId] then
       if cPEvents[1] then
         _G.assert(not pendingCPEvents[1])
         comboTargetGUID = destGUID
