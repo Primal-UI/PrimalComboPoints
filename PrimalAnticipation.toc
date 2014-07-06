@@ -4,7 +4,7 @@
 ## Dependencies:
 ## OptionalDeps:
 ## Author: meribold (Lukas Waymann)
-## Version: 1.0b1
+## Version: 1.0develop
 ## SavedVariables: PrimalAnticipationDB
 ## SavedVariablesPerCharacter:
 
