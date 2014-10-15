@@ -1,5 +1,7 @@
 PrimalAnticipation = LibStub("AceAddon-3.0"):NewAddon("PrimalAnticipation", "AceConsole-3.0")
+local AceGUI = _G.LibStub("AceGUI-3.0")
 PrimalAnticipation._G = _G
+--PrimalAnticipation.__index = _G
 
 setfenv(1, PrimalAnticipation)
 
@@ -7,6 +9,8 @@ local PrimalAnticipation = _G.PrimalAnticipation
 
 local eventLog = ""
 local lines = 0
+
+-- TODO: Whenever we manage to get our actual combo points, assert they are the same as what we expected.
 
 local function log(...)
   local string = ...
@@ -19,9 +23,23 @@ local function log(...)
     lines = lines + 1
   end
   eventLog = eventLog .. _G.string.format("%.3f: %s", time, string) .. "\n"
-  --[[
-  _G.print(_G.string.format("%.3f: %s", time, string), _G.select(2, ...))
-  --]]
+  --_G.print(_G.string.format("%.3f: %s", time, string), _G.select(2, ...))
+end
+
+local function saveError(errorMessage)
+  --_G.assert(false, "Event log:\n" .. eventLog)
+  if not errorMessage then
+    errorMessage = "Error " .. (#db.global.errors + 1) .. "\n\nEvent log:\n" .. eventLog
+  else
+    errorMessage = "Error " .. (#db.global.errors + 1) .. "\n\n" .. errorMessage .. "\n\nEvent log:\n" .. eventLog
+  end
+  _G.table.insert(db.global.errors, errorMessage)
+end
+
+-- Set comboPoints to the actual combo points we have when we managed to get them. Save an error if that actually
+-- changed comboPoints.
+local function sync(actualCPs)
+
 end
 
 mangle = {
@@ -146,13 +164,13 @@ comboPointFrames[3]:SetPoint("TOPRIGHT", comboPointFrame)
 comboPointFrames[4]:SetPoint("TOPLEFT", comboPointFrame)
 
 function comboPointFrame:update()
-  _G.assert(comboPoints <= _G.MAX_COMBO_POINTS, "Event log:\n" .. eventLog)
-  _G.assert(anticipatedCPs <= _G.MAX_COMBO_POINTS, "Event log:\n" .. eventLog)
+  if comboPoints > _G.MAX_COMBO_POINTS then saveError("comboPoints > MAX_COMBO_POINTS") end
+  if anticipatedCPs > _G.MAX_COMBO_POINTS then saveError("anticipatedCPs > MAX_COMBO_POINTS") end
 
   local cPOnTarget = _G.GetComboPoints("player")
+  _G.assert(cPOnTarget)
 
-  _G.assert(cPOnTarget, "Event log:\n" .. eventLog)
-  _G.assert(cPOnTarget == 0 or comboPoints == cPOnTarget, "Event log:\n" .. eventLog)
+  if cPOnTarget ~= 0 and comboPoints ~= cPOnTarget then saveError() end
 
   for i = 1, _G.MAX_COMBO_POINTS - 1 do
     comboPointFrames[i]:SetBackdropColor(0, 0, 0, .25)
@@ -164,12 +182,12 @@ function comboPointFrame:update()
       comboPointFrames[i]:SetBackdropBorderColor(0, 0, 0)
     end
     for i = cPOnTarget + 1, anticipatedCPs do
-      comboPointFrames[i]:SetBackdropColor(.75, .75, .75, .5)
+      comboPointFrames[i]:SetBackdropColor(1, 1, 1, .35)
       comboPointFrames[i]:SetBackdropBorderColor(0, 0, 0)
     end
   else--[[if anticipatedCPs < cPOnTarget then]]
     for i = 1, cPOnTarget do
-      comboPointFrames[i]:SetBackdropColor(.75, .75, .75, .5)
+      comboPointFrames[i]:SetBackdropColor(.5, .5, .5, .25)
       comboPointFrames[i]:SetBackdropBorderColor(0, 0, 0)
     end
   end
@@ -273,42 +291,44 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(_, subEvent, _, sourceGUID, _,
   if subEvent == "SPELL_CAST_SUCCESS" and sourceGUID == _G.UnitGUID("player") then
     local spellId, spellName = ...
     local debuggingOutput = ""
-    if cPGenerators[spellId] then
-      debuggingOutput = debuggingOutput .. subEvent .. ", " .. spellId .. " (" .. spellName .. ")"
-      -- It's inconsistent whether SPELL_CAST_SUCCESS or UNIT_COMBO_POINTS is posted first for Mangle (when Mangle is
-      -- used while Prowling, UNIT_COMBO_POINTS appears to be posted first). For other combo moves UNIT_COMBO_POINTS is
-      -- always posted first.
-      if cPEvents[1] then
-        debuggingOutput = debuggingOutput .. ", cPEvents[1] removed after " ..
-                          _G.string.format("%.3f", (1 - cPEvents[1].expires))
-        if not cPEvents[1].resolved then
-          if not comboTargetGUID or destGUID ~= comboTargetGUID then
-            comboTargetGUID = destGUID
-            comboPoints = 1
-            anticipatedCPs = 1
-          elseif anticipatedCPs < _G.MAX_COMBO_POINTS then
-            comboPoints = comboPoints + 1
-            anticipatedCPs = anticipatedCPs + 1
-          end
-        end
-        _G.table.remove(cPEvents, 1)
-        comboPointFrame:update()
-      elseif mangle[spellId] then
+
+    -- It's inconsistent whether SPELL_CAST_SUCCESS or UNIT_COMBO_POINTS is posted first for Mangle (when Mangle is used
+    -- while Prowling, UNIT_COMBO_POINTS appears to be posted first). For other combo moves UNIT_COMBO_POINTS is always
+    -- posted first.
+    if mangle[spellId] and not cPEvents[1] then
+        debuggingOutput = debuggingOutput .. subEvent .. ", " .. spellId .. " (" .. spellName .. ")"
         _G.table.insert(pendingCPEvents, PendingCPEvent:new(destGUID, spellId))
-      else
-        -- _G.assert(false, "Event log:\n" .. eventLog)
+
+    -- cPGenerators includes the spell ID for Mangle.
+    elseif cPGenerators[spellId] and cPEvents[1] then
+      debuggingOutput = debuggingOutput .. subEvent .. ", " .. spellId .. " (" .. spellName .. ")"
+      debuggingOutput = debuggingOutput .. ", cPEvents[1] removed after " ..
+                        _G.string.format("%.3f", (1 - cPEvents[1].expires))
+      if not cPEvents[1].resolved then
+        if not comboTargetGUID or destGUID ~= comboTargetGUID then
+          comboTargetGUID = destGUID
+          comboPoints = 1
+          anticipatedCPs = 1
+          comboPointFrame:update()
+        elseif anticipatedCPs < _G.MAX_COMBO_POINTS then
+          comboPoints = comboPoints + 1
+          anticipatedCPs = anticipatedCPs + 1
+          comboPointFrame:update()
+        end
       end
-    -- SPELL_CAST_SUCCESS is posted before UNIT_COMBO_POINTS for Savage Roar.
-    elseif savageRoar[spellId] then
+      _G.table.remove(cPEvents, 1)
+
+    elseif savageRoar[spellId] then -- SPELL_CAST_SUCCESS is posted before UNIT_COMBO_POINTS for Savage Roar.
       debuggingOutput = debuggingOutput .. subEvent .. ", " .. spellId .. " (" .. spellName .. ")"
       anticipatedCPs = 0
       _G.table.insert(pendingCPEvents, PendingCPEvent:new(destGUID, spellId))
       comboPointFrame:update()
+
     elseif swipe[spellId] then
       debuggingOutput = debuggingOutput .. subEvent .. ", " .. spellId .. " (" .. spellName .. ")"
       unitsSwiped = 0
-    -- UNIT_COMBO_POINTS is posted before SPELL_CAST_SUCCESS for Pounce.
-    elseif pounce[spellId] then
+
+    elseif pounce[spellId] then -- UNIT_COMBO_POINTS is posted before SPELL_CAST_SUCCESS for Pounce.
       if cPEvents[1] then
         comboTargetGUID = destGUID
         debuggingOutput = debuggingOutput .. ", cPEvents[1] removed after " ..
@@ -322,7 +342,7 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(_, subEvent, _, sourceGUID, _,
         _G.table.remove(cPEvents, 1)
         comboPointFrame:update()
       else
-        -- _G.assert(false, "Event log:\n" .. eventLog)
+        -- if not (false) then saveError() end
       end
     --[[
     elseif primalFury[spellId] then
@@ -340,8 +360,7 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(_, subEvent, _, sourceGUID, _,
                         (critical and ", critical" or "")
       if mangle[spellId] then
         for i, pendingCPEvent in _G.ipairs(pendingCPEvents) do
-          local spellId = pendingCPEvent.spellId
-          if mangle[spellId] then
+          if mangle[pendingCPEvent.spellId] then
             if not comboTargetGUID or destGUID ~= comboTargetGUID then
               anticipatedCPs = 1
               comboPointFrame:update()
@@ -351,8 +370,6 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(_, subEvent, _, sourceGUID, _,
             end
           end
         end
-      else
-        -- ...
       end
       if critical then
         _G.table.insert(pendingCPEvents, PendingCPEvent:new(destGUID, 16953 --[[ Primal Fury ]]))
@@ -428,17 +445,32 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(_, subEvent, _, sourceGUID, _,
         _G.table.remove(cPEvents, 1)
         comboPointFrame:update()
       else
-        _G.assert(false, "Event log:\n" .. eventLog)
+        if not (false) then saveError() end
       end
       log(debuggingOutput)
     end
+
   elseif subEvent == "SPELL_MISSED" and sourceGUID == _G.UnitGUID("player") then
     local spellId, spellName, _, missType = ...
+    if missType == "ABSORB" or missType == "BLOCK" then return end -- http://wowpedia.org/COMBAT_LOG_EVENT#Miss_type
     local debuggingOutput = ""
-    if cPGenerators[spellId] then
+    if mangle[spellId] then
       debuggingOutput = debuggingOutput .. subEvent .. ", " .. spellId .. " (" .. spellName .. "), " .. missType
+      for i, pendingCPEvent in _G.ipairs(pendingCPEvents) do
+        if mangle[pendingCPEvent.spellId] then
+          debuggingOutput = debuggingOutput .. ", pendingCPEvents[" .. i .. "] removed after " ..
+                            _G.string.format("%.3f", (1 - pendingCPEvent.expires))
+          _G.table.remove(pendingCPEvents, i)
+          break
+        end
+      end
+      log(debuggingOutput)
+    elseif cPGenerators[spellId] then
+      debuggingOutput = debuggingOutput .. subEvent .. ", " .. spellId .. " (" .. spellName .. "), " .. missType
+      -- ...
+      log(debuggingOutput)
     end
-    log(debuggingOutput)
+
   elseif (subEvent == "SPELL_AURA_APPLIED" or subEvent == "SPELL_AURA_REFRESH") and sourceGUID == _G.UnitGUID("player")
   then
     local spellId, spellName, _, _, _ = ...
@@ -459,10 +491,11 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(_, subEvent, _, sourceGUID, _,
         end
         _G.table.remove(cPEvents, 1)
         comboPointFrame:update()
+        log(debuggingOutput)
       else
-        _G.assert(false, "Event log:\n" .. eventLog)
+        log(debuggingOutput)
+        if not (false) then saveError() end
       end
-      log(debuggingOutput)
     end
   -- If the combo target is dead (and we don't target it) Swipe can acquire a new combo target.
   elseif subEvent == "UNIT_DIED" or subEvent == "UNIT_DESTROYED" then
@@ -473,7 +506,7 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(_, subEvent, _, sourceGUID, _,
 end
 
 function handlerFrame:UNIT_COMBO_POINTS(unit)
-  _G.assert(unit == "player", "Event log:\n" .. eventLog)
+  if not (unit == "player") then saveError() end
 
   local debuggingOutput = ""
   local resolved = false
@@ -501,8 +534,7 @@ function handlerFrame:UNIT_COMBO_POINTS(unit)
 
   if pendingCPEvents[1] then
     local pendingCPEvent = pendingCPEvents[1]
-    local destGUID = pendingCPEvent.destGUID
-    local spellId = pendingCPEvent.spellId
+    local destGUID, spellId = pendingCPEvent.destGUID, pendingCPEvent.spellId
     debuggingOutput = debuggingOutput .. ", for " .. pendingCPEvents[1].spellId .. ", after " ..
                       _G.string.format("%.3f", (1 - pendingCPEvents[1].expires))
     if mangle[spellId] or primalFury[spellId] then
@@ -521,7 +553,7 @@ function handlerFrame:UNIT_COMBO_POINTS(unit)
       comboTargetGUID = nil
       comboPoints = 0
     else
-      _G.assert(false, "Event log:\n" .. eventLog)
+      saveError()
     end
     _G.table.remove(pendingCPEvents, 1)
     resolved = true
@@ -648,28 +680,58 @@ local options = {
   type = "group",
   name = "PrimalAnticipation Options",
   args = {
-    toggleLock = {
-      type = "toggle",
-      name = "Lock Frame",
-      desc = "Enable to prevent dragging of the combo point frame.",
-      set = function(info, val)
-        comboPointFrame:EnableMouse(not val)
-        comboPointFrame:SetMovable(not val)
-        comboPointFrame:RegisterForDrag(not val and "LeftButton" or nil)
-        db.global.lock = val
-      end,
-      get = function(info) return db.global.lock end,
+    general = {
+      type = "group",
+      name = "General",
       order = 100,
+      args = {
+        toggleLock = {
+          type = "toggle",
+          name = "Lock Frame",
+          desc = "Enable to prevent dragging of the combo point frame.",
+          set = function(info, val)
+            comboPointFrame:EnableMouse(not val)
+            comboPointFrame:SetMovable(not val)
+            comboPointFrame:RegisterForDrag(not val and "LeftButton" or nil)
+            db.global.lock = val
+          end,
+          get = function(info) return db.global.lock end,
+          order = 100,
+        },
+        toggleSound = {
+          type = "toggle",
+          name = "Toggle Sound",
+          desc = "Play a sound when reaching 5 combo points.",
+          set = function(info, val)
+            db.global.sound = val
+          end,
+          get = function(info) return db.global.sound end,
+          order = 110,
+        },
+      },
     },
-    toggleSound = {
-      type = "toggle",
-      name = "Toggle Sound",
-      desc = "Play a sound when reaching 5 combo points.",
-      set = function(info, val)
-        db.global.sound = val
-      end,
-      get = function(info) return db.global.sound end,
-      order = 110,
+    errors = {
+      type = "group",
+      name = "Errors",
+      order = 200,
+      childGroups = "select",
+      args = {
+        errorNumber = {
+          type = "range",
+          name = "",
+          order = 100,
+          min = 0,
+          max = 100,
+          step = 1,
+        },
+        errorMessage = {
+          type = "input",
+          name = "",
+          order = 200,
+          width = "full",
+          multiline = 20,
+        },
+      },
     },
   },
 }
@@ -680,18 +742,100 @@ local AceConfigDialog = _G.LibStub("AceConfigDialog-3.0")
 AceConfigDialog:SetDefaultSize("PrimalAnticipation", 480, 360)
 
 local function toggleOptionsUI()
-  AceConfigDialog:Open("PrimalAnticipation")
+  --AceConfigDialog:Open("PrimalAnticipation")
+  local frame = AceGUI:Create("Frame")
+  frame:SetTitle("PrimalAnticipation Options")
+  frame:SetCallback("OnClose", function(widget) AceGUI:Release(widget) end)
+  frame:SetLayout("Fill")
+
+  local tab = AceGUI:Create("TabGroup")
+  tab:SetLayout("Flow")
+  tab:SetTabs({
+    { text = "General", value = "general" },
+    { text = "Errors", value = "errors" },
+  })
+  tab:SetCallback("OnGroupSelected", function(container, event, group)
+    container:ReleaseChildren()
+    if group == "general" then
+      -- ...
+    elseif group == "errors" then
+      local i = 1
+      local previousButton= AceGUI:Create("Button")
+      local deleteButton= AceGUI:Create("Button")
+      local nextButton = AceGUI:Create("Button")
+      --local errorGroup = AceGUI:Create("InlineGroup")
+      --local errorBox = AceGUI:Create("Label")
+      local errorBox = AceGUI:Create("MultiLineEditBox")
+      previousButton:SetText("Previous")
+      previousButton:SetRelativeWidth(0.3)
+      previousButton:SetCallback("OnClick", function()
+        if i > 1 then
+          i = i - 1
+          --errorBox:SetLabel(i)
+          deleteButton:SetText("Delete (" .. i .. "/" .. #db.global.errors .. ")")
+          errorBox:SetText(db.global.errors[i] or "")
+        end
+      end)
+      deleteButton:SetText("Delete (" .. i .. "/" .. #db.global.errors .. ")")
+      deleteButton:SetRelativeWidth(0.4)
+      deleteButton:SetCallback("OnClick", function()
+        if i > 0 then
+          _G.table.remove(db.global.errors, i)
+          if i > 1 and i > #db.global.errors then
+            i = i - 1
+            --errorBox:SetLabel(i)
+            deleteButton:SetText("Delete (" .. i .. "/" .. #db.global.errors .. ")")
+          end
+          errorBox:SetText(db.global.errors[i] or "")
+        end
+      end)
+      nextButton:SetText("Next")
+      nextButton:SetRelativeWidth(0.3)
+      nextButton:SetCallback("OnClick", function()
+        if i < #db.global.errors then
+          i = i + 1
+          --errorBox:SetLabel(i)
+          deleteButton:SetText("Delete (" .. i .. "/" .. #db.global.errors .. ")")
+          errorBox:SetText(db.global.errors[i] or "")
+        end
+      end)
+      --errorGroup:SetLayout("Fill")
+      --errorGroup:SetHeight(1024)
+      --errorGroup:AddChild(errorBox)
+      --errorBox:SetFont("Fonts\\FRIZQT__.TTF", 13)
+      --errorBox:SetFont("Fonts\\ARIALN.TTF", 13)
+      --errorBox:SetDisabled(true)
+      --errorBox:EnableKeyboard(false)
+      errorBox:DisableButton(true)
+      errorBox:SetLabel("")
+      errorBox:SetText(db.global.errors[1] or "")
+      errorBox:SetCallback("OnTextChanged", function(self, text)
+        self:SetText(db.global.errors[1] or "")
+      end)
+      errorBox:SetFullWidth(true)
+      errorBox:SetFullHeight(true)
+      container:AddChild(previousButton)
+      container:AddChild(deleteButton)
+      container:AddChild(nextButton)
+      container:AddChild(errorBox)
+      --errorGroup:SetPoint("BOTTOM", previousButton, "TOP")
+      container:SetLayout("Flow")
+    end
+  end)
+  tab:SelectTab("general")
+  frame:AddChild(tab)
 end
 ------------------------------------------------------------------------------------------------------------------------
 
 -- http://www.wowace.com/addons/ace3/pages/api/ace-addon-3-0/
 function PrimalAnticipation:OnInitialize()
-  _G.assert(_G.MAX_COMBO_POINTS and _G.MAX_COMBO_POINTS == 5, "Event log:\n" .. eventLog)
+  if not (_G.MAX_COMBO_POINTS and _G.MAX_COMBO_POINTS == 5) then saveError() end
   do -- http://www.wowace.com/addons/ace3/pages/api/ace-db-3-0/
     local defaults = {
       global = {
         sound = true,
         lock = false,
+        errors = {},
       },
     }
     self.db = _G.LibStub("AceDB-3.0"):New("PrimalAnticipationDB", defaults, true)
