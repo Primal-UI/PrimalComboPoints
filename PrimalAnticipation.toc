@@ -10,4 +10,4 @@
 
 embeds.xml
 
-PrimalAnticipation.lua
+core.lua
