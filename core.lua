@@ -1,17 +1,14 @@
 -- We lose combo points when missing with Maim now... hopefully a bug. TODO: make changes so the AddOn doesn't break
 -- when that happens without a target.
 
--- TODO: only wait until the next frame after SPELL_DAMAGE is posted for Swipe before the ComboPointsChange can be
--- removed again.
+--FeralComboPoints = setmetatable({}, { __index = _G })
+FeralComboPoints = LibStub("AceAddon-3.0"):NewAddon("FeralComboPoints", "AceConsole-3.0")
+--setmetatable(FeralComboPoints, { __index = _G })
+FeralComboPoints._G = _G
 
---PrimalAnticipation = setmetatable({}, { __index = _G })
-PrimalAnticipation = LibStub("AceAddon-3.0"):NewAddon("PrimalAnticipation", "AceConsole-3.0")
---setmetatable(PrimalAnticipation, { __index = _G })
-PrimalAnticipation._G = _G
+setfenv(1, FeralComboPoints)
 
-setfenv(1, PrimalAnticipation)
-
-local PrimalAnticipation = _G.PrimalAnticipation
+local FeralComboPoints = _G.FeralComboPoints
 local AceGUI = _G.LibStub("AceGUI-3.0")
 local AceConfig = _G.LibStub("AceConfig-3.0")
 local AceConfigDialog = _G.LibStub("AceConfigDialog-3.0")
@@ -98,13 +95,35 @@ function ComboPointsChange:new()
   return cPChange
 end
 
+function ComboPointsChange:set(key, value)
+  if self[key] and self[key] ~= value then
+    if _G.type(key) == "string" then
+      logError("(cPChange[\"" .. key .. "\"] == " .. value .. ") expected")
+    else
+      logError("(cPChange[" .. key .. "] == " .. value .. ") expected")
+    end
+  end
+  self[key] = value
+end
+
+function ComboPointsChange:delete()
+  log(", cp change removed after " .. _G.string.format("%.3f", ComboPointsChange.expires - self.expires))
+  cPChange = nil
+end
+
 function ComboPointsChange:resolve()
   if not self.UNIT_COMBO_POINTS and not self.comboPointsBefore then
     self.comboPointsBefore = comboPoints
   end
   if self.spellId and not self.comboPointsAfter then
-    if (rake[self.spellId] or shred[self.spellId] or swipe[self.spellId]) and self.comboPointsBefore then
-      if self.critical ~= nil then
+    if (rake[self.spellId] or shred[self.spellId]) and self.comboPointsBefore then
+      if self.SPELL_DAMAGE or self.SPELL_MISSED or self.critical ~= nil then
+        self.comboPointsAfter = _G.math.min(_G.MAX_COMBO_POINTS, self.comboPointsBefore + (self.critical and 2 or 1))
+      end
+    elseif swipe[self.spellId] and self.comboPointsBefore then
+      if self.SPELL_DAMAGE and self.SPELL_DAMAGE < _G.GetTime() or self.SPELL_MISSED and
+        self.SPELL_MISSED < _G.GetTime()
+      then
         self.comboPointsAfter = _G.math.min(_G.MAX_COMBO_POINTS, self.comboPointsBefore + (self.critical and 2 or 1))
       end
     elseif ferociousBite[self.spellId] or maim[self.spellId] and self.SPELL_DAMAGE then
@@ -113,8 +132,6 @@ function ComboPointsChange:resolve()
       self.comboPointsAfter = 0
     elseif maim[self.spellId] and self.SPELL_MISSED then
       -- TODO.
-    elseif (rake[self.spellId] or shred[self.spellId] or swipe[self.spellId]) then
-      -- ...
     end
   end
   -- Apply the combo point change.
@@ -122,7 +139,7 @@ function ComboPointsChange:resolve()
     if self.comboPointsAfter == _G.MAX_COMBO_POINTS then
       _G.assert(not comboPointFrames[5]:IsShown())
       if db.global.sound then
-        local file = [[Interface\AddOns\PrimalAnticipation\media\sounds\noisecrux\vio]] .. _G.math.random(10) .. ".ogg"
+        local file = [[Interface\AddOns\FeralComboPoints\media\sounds\noisecrux\vio]] .. _G.math.random(10) .. ".ogg"
         _G.PlaySoundFile(file, "Master")
       end
     end
@@ -133,47 +150,63 @@ function ComboPointsChange:resolve()
   -- Remove the combo point change.
   if self.SPELL_CAST_SUCCESS then -- If there is no SPELL_CAST_SUCCESS, there is no combo point change.
     if swipe[self.spellId] then
-      return -- Can't remove this; there may be pending SPELL_DAMAGE events.
+      if self.UNIT_COMBO_POINTS or self.comboPointsBefore == 5 then
+        if self.SPELL_DAMAGE and self.SPELL_DAMAGE < _G.GetTime() then
+          self:delete()
+          return
+        elseif self.SPELL_MISSED and self.SPELL_MISSED < _G.GetTime() then
+          -- TODO.
+        end
+      end
     end
     if shred[self.spellId] or rake[self.spellId] or moonfire[self.spellId] then
       if (self.UNIT_COMBO_POINTS or self.comboPointsBefore == 5) and (self.SPELL_DAMAGE or self.SPELL_MISSED) then
-        log(", cp change removed after " .. _G.string.format("%.3f", ComboPointsChange.expires - self.expires))
-        return true
+        self:delete()
+        return
       end
     end
     if ferociousBite[self.spellId] then
-      if self.UNIT_COMBO_POINTS and self.SPELL_DAMAGE or self.SPELL_MISSED then
-        log(", cp change removed after " .. _G.string.format("%.3f", ComboPointsChange.expires - self.expires))
-        return true
+      if self.UNIT_COMBO_POINTS then
+        if self.SPELL_DAMAGE or self.SPELL_MISSED then
+          self:delete()
+          return
+        end
+      else--[[if not self.UNIT_COMBO_POINTS then]]
+        if self.SPELL_MISSED and (self.missType == "DEFLECT" or self.missType == "DODGE" or self.missType == "EVADE" or
+          self.missType == "MISS" or self.missType == "PARRY")
+        then
+          self:delete()
+          return
+        end
       end
     end
     if maim[self.spellId] then
       if self.UNIT_COMBO_POINTS and (self.SPELL_DAMAGE or self.SPELL_MISSED) then
-        log(", cp change removed after " .. _G.string.format("%.3f", ComboPointsChange.expires - self.expires))
-        return true
+        self:delete()
+        return
       end
     end
     if rip[self.spellId] then
       if self.UNIT_COMBO_POINTS and (self.SPELL_AURA_APPLIED or self.SPELL_AURA_REFRESH) or self.SPELL_MISSED then
-        log(", cp change removed after " .. _G.string.format("%.3f", ComboPointsChange.expires - self.expires))
-        return true
+        self:delete()
+        return
       end
     elseif self.UNIT_COMBO_POINTS and savageRoar[self.spellId] then
-      log(", cp change removed after " .. _G.string.format("%.3f", ComboPointsChange.expires - self.expires))
-      return true
+      self:delete()
+      return
     end
     if self.UNIT_COMBO_POINTS then
       if self.UNIT_DIED or self.UNIT_DESTROYED then -- The unit we got SPELL_CAST_SUCCESS for died. What are we waiting for?
-        log(", cp change removed after " .. _G.string.format("%.3f", ComboPointsChange.expires - self.expires))
-        return true
+        self:delete()
+        return
       end
     end
   elseif self.oOCDecay and self.UNIT_COMBO_POINTS then -- Mostly.
-    log(", cp change removed after " .. _G.string.format("%.3f", ComboPointsChange.expires - self.expires))
-    return true
+    self:delete()
+    return
   elseif self.PLAYER_DEAD and self.UNIT_COMBO_POINTS then -- Mostly!
-    log(_G.string.format(", cp change removed after %.3f", ComboPointsChange.expires - self.expires))
-    return true
+    self:delete()
+    return
   end
 end
 ------------------------------------------------------------------------------------------------------------------------
@@ -212,8 +245,8 @@ end
 function logError(errorMessage)
   log("\n")
   -- http://www.cplusplus.com/reference/ctime/strftime
-  local caption = _G.date("%Y-%m-%d %X") .. " | "  .. _G.GetTime() .. " | " .. "PrimalAnticipation-v" ..
-                  _G.GetAddOnMetadata("PrimalAnticipation", "Version")
+  local caption = _G.date("%Y-%m-%d %X") .. " | "  .. _G.GetTime() .. " | " .. "FeralComboPoints-v" ..
+                  _G.GetAddOnMetadata("FeralComboPoints", "Version")
   if not errorMessage then
     errorMessage = caption .. "\n\nUnkown error" .. "\n\n" .. _G.debugstack() .. "\nEvent log:\n"
   else
@@ -247,7 +280,7 @@ do
     else
       for _, unitID in _G.ipairs(unitIDs) do
         if _G.UnitExists(unitID) and _G.UnitCanAttack("player", unitID) then
-          local actualCPs = _G.GetComboPoints("player", target); _G.assert(actualCPs)
+          local actualCPs = _G.GetComboPoints("player", unitID); _G.assert(actualCPs)
           return actualCPs
         end
       end
@@ -335,7 +368,7 @@ end
 handlerFrame = _G.CreateFrame("Frame")
 
 handlerFrame:SetScript("OnEvent", function(self, event, ...)
-  -- TODO: move the event handler functions into PrimalAnticipation to allow for better debugging output?
+  -- TODO: move the event handler functions into FeralComboPoints to allow for better debugging output?
   return self[event](self, ...)
 end)
 
@@ -343,8 +376,9 @@ handlerFrame:SetScript("OnUpdate", function(self, elapsed)
   if not cPChange then return end
   cPChange.expires = cPChange.expires - elapsed
   if cPChange.expires <= 0 then
-    if cPChange.spellId and swipe[cPChange.spellId] then
-      -- Can't remove combo point changes for Swipe without wating.
+    log("Combo point change expired")
+    if not cPChange.UNIT_COMBO_POINTS then
+      -- This is fine.
     else
       local errorMessage = "Combo point change expired"
       for k, v in _G.pairs(cPChange) do
@@ -352,6 +386,7 @@ handlerFrame:SetScript("OnUpdate", function(self, elapsed)
       end
       logError(errorMessage)
     end
+    log("\n")
     cPChange = nil
   end
 end)
@@ -373,9 +408,9 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(timestamp, subEvent, _, source
         cPChange = ComboPointsChange:new()
       end
       if not swipe[spellId] then cPChange.destGUID = destGUID end
-      cPChange[subEvent] = timestamp
+      cPChange[subEvent] = _G.GetTime()
       cPChange.spellId = spellId
-      if cPChange:resolve() then cPChange = nil end
+      cPChange:resolve()
       log("\n")
 
     elseif primalFury[spellId] then
@@ -384,26 +419,18 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(timestamp, subEvent, _, source
         cPChange = ComboPointsChange:new()
       end
       cPChange.critical = true
-      if cPChange:resolve() then cPChange = nil end
+      cPChange:resolve()
       log("\n")
 
     elseif savageRoar[spellId] then
       log(subEvent .. ", " .. spellId .. " (" .. spellName .. ")")
-      if cPChange ~= nil then
-        -- SPELL_CAST_SUCCESS is posted before UNIT_COMBO_POINTS for Savage Roar. TODO: is this still true in 6.0.2?
-        logError("(cPChange == nil) expected")
-      else
+      if cPChange == nil then
         cPChange = ComboPointsChange:new()
       end
-      if cPChange.spellId then
-        logError("(cPChange.spellId == nil) expected")
-      end
-      cPChange.spellId = spellId
-      if cPChange[subEvent] then
-        logError("(cPChange[\"" .. subEvent .. "\" == nil) expected")
-      end
-      cPChange[subEvent] = timestamp
-      if cPChange:resolve() then cPChange = nil end
+      cPChange:set("spellId", spellId)
+      cPChange:set(subEvent, _G.GetTime())
+      cPChange:set("comboPointsAfter", 0)
+      cPChange:resolve()
       log("\n")
 
     -- We can get SPELL_DAMAGE before SPELL_CAST_SUCCESS for at least Ferocious Bite.
@@ -413,18 +440,9 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(timestamp, subEvent, _, source
         cPChange = ComboPointsChange:new()
       end
       cPChange.destGUID = destGUID
-      if not cPChange.spellId then
-        cPChange.spellId = spellId
-      elseif cPChange.spellId ~= spellId then
-        logError("(cPChange.spellId == " .. spellId.. ") expected")
-        cPChange = ComboPointsChange:new()
-        cPChange.spellId = spellId
-      end
-      if cPChange[subEvent] then
-        logError("(cPChange[\"" .. subEvent .. "\" == nil) expected")
-      end
-      cPChange[subEvent] = timestamp
-      if cPChange:resolve() then cPChange = nil end
+      cPChange:set("spellId", spellId)
+      cPChange:set(subEvent, _G.GetTime())
+      cPChange:resolve()
       log("\n")
     end
 
@@ -436,24 +454,10 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(timestamp, subEvent, _, source
       if cPChange == nil then
         cPChange = ComboPointsChange:new()
       end
-      if cPChange[subEvent] then
-        logError("(cPChange[\"" .. subEvent .. "\"] == nil) expected")
-        cPChange = ComboPointsChange:new()
-      end
-      cPChange[subEvent] = timestamp
-      if not cPChange.spellId then
-        cPChange.spellId = spellId
-      elseif cPChange.spellId ~= spellId then
-        logError("(cPChange.spellId == " .. spellId.. ") expected")
-        cPChange = ComboPointsChange:new()
-        cPChange.spellId = spellId
-      end
-      if cPChange.critical and cPChange.critical ~= (critical and true or false) then
-        logError("(cPChange.critical == " .. (critical and "true" or "false") .. ") expected")
-        cPChange = ComboPointsChange:new()
-      end
-      cPChange.critical = critical and true or false
-      if cPChange:resolve() then cPChange = nil end
+      cPChange:set(subEvent, _G.GetTime())
+      cPChange:set("spellId", spellId)
+      cPChange:set("critical", critical and true or false)
+      cPChange:resolve()
       log("\n")
 
     -- There is only one UNIT_COMBO_POINTS event, no matter how many units were hit by Swipe as of patch 6.0.2. The
@@ -463,40 +467,27 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(timestamp, subEvent, _, source
       if cPChange == nil then
         cPChange = ComboPointsChange:new()
       end
-      if not cPChange.spellId then
-        cPChange.spellId = spellId
-      elseif cPChange.spellId ~= spellId then
-        logError("(cPChange.spellId == " .. spellId.. ") expected")
-        cPChange = ComboPointsChange:new()
-        cPChange.spellId = spellId
-      end
+      cPChange:set("spellId", spellId)
       if not cPChange[subEvent] then
-        cPChange[subEvent] = timestamp
+        cPChange[subEvent] = _G.GetTime()
+        _G.C_Timer.After(.001, function()
+          log("Timer expired")
+          cPChange:resolve()
+          log("\n")
+        end)
       end
-      cPChange.critical = cPChange.critical or (critical and true or false) -- ((nil or false) == false)
-      if cPChange:resolve() then cPChange = nil end
+      cPChange.critical = cPChange.critical or (critical and true or false)
       log("\n")
 
-    -- UNIT_COMBO_POINTS is posted before SPELL_DAMAGE for Ferocious Bite and Main. For finishers, we can never directly
-    -- resolve UNIT_COMBO_POINTS. TODO: confirm this hasn't changed in patch 6.0.2.
     elseif ferociousBite[spellId] or maim[spellId] then
       log(subEvent .. ", " .. spellId .. " (" .. spellName .. ")")
       if cPChange == nil then
         cPChange = ComboPointsChange:new()
       end
-      if not cPChange.spellId then
-        cPChange.spellId = spellId
-      elseif cPChange.spellId ~= spellId then
-        logError("(cPChange.spellId == " .. spellId.. ") expected")
-        cPChange = ComboPointsChange:new()
-        cPChange.spellId = spellId
-      end
-      if cPChange[subEvent] then
-        logError("(cPChange[\"" .. subEvent .. "\"] == nil) expected")
-        cPChange = ComboPointsChange:new()
-      end
-      cPChange[subEvent] = timestamp
-      if cPChange:resolve() then cPChange = nil end
+      cPChange:set("spellId", spellId)
+      cPChange:set(subEvent, _G.GetTime())
+      cPChange.comboPointsAfter = 0
+      cPChange:resolve()
       log("\n")
     end
 
@@ -510,44 +501,33 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(timestamp, subEvent, _, source
       return
     end -- http://wowpedia.org/COMBAT_LOG_EVENT#Miss_type
     ]]
-    if rake[spellId] or shred[spellId] or swipe[spellId] then
+    if rake[spellId] or shred[spellId] then
       log(subEvent .. ", " .. spellId .. " (" .. spellName .. "), " .. missType)
       if cPChange == nil then
         cPChange = ComboPointsChange:new()
       end
-      if not cPChange.spellId then
-        cPChange.spellId = spellId
-      elseif cPChange.spellId ~= spellId then
-        logError("(cPChange.spellId == " .. spellId.. ") expected")
+      cPChange:set("spellId", spellId)
+      cPChange:set(subEvent, _G.GetTime())
+      cPChange:resolve()
+      log("\n")
+    elseif swipe[spellId] then
+      log(subEvent .. ", " .. spellId .. " (" .. spellName .. "), " .. missType)
+      if cPChange == nil then
         cPChange = ComboPointsChange:new()
-        cPChange.spellId = spellId
       end
-      if not cPChange[subEvent] then
-        cPChange[subEvent] = timestamp
-      else
-        -- TODO: log an error unless this is Swipe.
-      end
-      if cPChange:resolve() then cPChange = nil end
+      cPChange:set("spellId", spellId)
+      cPChange:set(subEvent, _G.GetTime())
+      cPChange:resolve()
       log("\n")
     elseif ferociousBite[spellId] or rip[spellId] then
       log(subEvent .. ", " .. spellId .. " (" .. spellName .. "), " .. missType)
       if cPChange == nil then
         cPChange = ComboPointsChange:new()
       end
-      if not cPChange.spellId then
-        cPChange.spellId = spellId
-      elseif cPChange.spellId ~= spellId then
-        logError("(cPChange.spellId == " .. spellId.. ") expected")
-        cPChange = ComboPointsChange:new()
-        cPChange.spellId = spellId
-      end
-      if cPChange[subEvent] then
-        logError("(cPChange[\"" .. subEvent .. "\"] == nil) expected")
-        cPChange = ComboPointsChange:new()
-        cPChange.spellId = spellId
-      end
-      cPChange[subEvent] = timestamp
-      if cPChange:resolve() then cPChange = nil end
+      cPChange:set("spellId", spellId)
+      cPChange:set(subEvent, _G.GetTime())
+      cPChange:set("missType", missType)
+      cPChange:resolve()
       log("\n")
 
     elseif maim[spellId] then
@@ -555,20 +535,10 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(timestamp, subEvent, _, source
       if cPChange == nil then
         cPChange = ComboPointsChange:new()
       end
-      if not cPChange.spellId then
-        cPChange.spellId = spellId
-      elseif cPChange.spellId ~= spellId then
-        logError("(cPChange.spellId == " .. spellId.. ") expected")
-        cPChange = ComboPointsChange:new()
-        cPChange.spellId = spellId
-      end
-      if cPChange[subEvent] then
-        logError("(cPChange[\"" .. subEvent .. "\"] == nil) expected")
-        cPChange = ComboPointsChange:new()
-        cPChange.spellId = spellId
-      end
-      cPChange[subEvent] = timestamp
-      if cPChange:resolve() then cPChange = nil end
+      cPChange:set("spellId", spellId)
+      cPChange:set(subEvent, _G.GetTime())
+      cPChange:set("missType", missType)
+      cPChange:resolve()
       log("\n")
     end
 
@@ -578,31 +548,19 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(timestamp, subEvent, _, source
     log(subEvent .. ", " .. spellId .. " (" .. spellName .. ")")
     if rip[spellId] then
       if cPChange == nil then
-        -- TODO: error?
         cPChange = ComboPointsChange:new()
       end
-      if not cPChange.spellId then
-        -- TODO: error?
-        cPChange.spellId = spellId
-      elseif cPChange.spellId ~= spellId then
-        logError("(cPChange.spellId == " .. spellId.. ") expected")
-        cPChange = ComboPointsChange:new()
-        cPChange.spellId = spellId
-      end
-      if cPChange[subEvent] then
-        logError("(cPChange[\"" .. subEvent .. "\"] == nil) expected")
-        cPChange = ComboPointsChange:new()
-        cPChange.spellId = spellId
-      end
-      cPChange[subEvent] = timestamp
-      if cPChange:resolve() then cPChange = nil end
+      cPChange:set("spellId", spellId)
+      cPChange:set(subEvent, _G.GetTime())
+      cPChange:set("comboPointsAfter", 0)
+      cPChange:resolve()
       log("\n")
     end
   elseif subEvent == "UNIT_DIED" or subEvent == "UNIT_DESTROYED" then
     if cPChange and cPChange.destGUID and cPChange.destGUID == destGUID then
       log(subEvent .. ", " .. destGUID)
-      cPChange[subEvent] = timestamp
-      if cPChange:resolve() then cPChange = nil end
+      cPChange[subEvent] = _G.GetTime()
+      cPChange:resolve()
       log("\n")
     end
   end
@@ -621,24 +579,12 @@ function handlerFrame:UNIT_COMBO_POINTS(unit, arg2)
   if cPChange == nil then
     cPChange = ComboPointsChange:new()
   end
-  if cPChange.UNIT_COMBO_POINTS then
-    logError("(cPChange.UNIT_COMBO_POINTS == nil) expected")
-    cPChange = ComboPointsChange:new()
-  end
-  cPChange.UNIT_COMBO_POINTS = _G.GetTime()
-  cPChange.comboPointsBefore = comboPoints
+  cPChange:set("UNIT_COMBO_POINTS", _G.GetTime())
+  cPChange:set("comboPointsBefore", comboPoints)
 
   local actualCPs = GetComboPoints()
   if actualCPs then
-    if not cPChange.comboPointsAfter then
-      cPChange.comboPointsAfter = actualCPs
-    elseif cPChange.comboPointsAfter ~= actualCPs then
-      logError("(cPChange.comboPointsAfter == " .. actualCPs .. ") expected")
-      cPChange = ComboPointsChange:new()
-      cPChange.UNIT_COMBO_POINTS = _G.GetTime()
-      cPChange.comboPointsBefore = comboPoints
-      cPChange.comboPointsAfter = actualCPs
-    end
+    cPChange:set("comboPointsAfter", actualCPs)
   end
 
   if not _G.UnitAffectingCombat("player") then
@@ -646,15 +592,10 @@ function handlerFrame:UNIT_COMBO_POINTS(unit, arg2)
     if cPChange.SPELL_CAST_SUCCESS then
       _G.assert(cPChange.spellId)
       if savageRoar[cPChange.spellId] then
-        if not cPChange.comboPointsAfter then
-          cPChange.comboPointsAfter = 0
-        elseif cPChange.comboPointsAfter ~= 0 then
-          logError("(cPChange.comboPointsAfter == 0) expected")
-          -- TODO: recover.
-        end
+        cPChange:set("comboPointsAfter", 0)
       else
-          logError("(savageRoar[cPChange.spellId] ~= nil) expected")
-        -- TODO: recover?
+        logError("(savageRoar[cPChange.spellId] ~= nil) expected")
+        -- TODO: recover...
       end
     else
       local oOCDuration = _G.GetTime() - oOCTime
@@ -672,7 +613,7 @@ function handlerFrame:UNIT_COMBO_POINTS(unit, arg2)
     end
   end
 
-  if cPChange:resolve() then cPChange = nil end
+  cPChange:resolve()
   log("\n")
 end
 
@@ -697,7 +638,7 @@ local function onUnitChanged(unit)
       if cPChange.UNIT_COMBO_POINTS then
         if not cPChange.comboPointsAfter then
           cPChange.comboPointsAfter = actualCPs
-          if cPChange:resolve() then cPChange = nil end
+          cPChange:resolve()
         elseif cPChange.comboPointsAfter ~= actualCPs then
           logError("(cPChange.comboPointsAfter == " .. cPChange.comboPointsAfter .. "), but GetComboPoints(\"player\""
                 .. (unit and (", \"" .. unit .. "\"") or "") .. ") == " .. actualCPs .. "\n")
@@ -706,7 +647,7 @@ local function onUnitChanged(unit)
       else--[[if not cPChange.UNIT_COMBO_POINTS then]]
         if not cPChange.comboPointsBefore then
           cPChange.comboPointsBefore = actualCPs
-          if cPChange:resolve() then cPChange = nil end
+          cPChange:resolve()
         elseif cPChange.comboPointsAfter ~= actualCPs then
           logError("(cPChange.comboPointsBefore == " .. cPChange.comboPointsBefore .. "), but GetComboPoints(\"player\""
                 .. (unit and (", \"" .. unit .. "\"") or "") .. ") == " .. actualCPs .. "\n")
@@ -730,7 +671,7 @@ function handlerFrame:PLAYER_DEAD()
   end
   cPChange.PLAYER_DEAD = _G.GetTime()
   cPChange.comboPointsAfter = 0
-  if cPChange:resolve() then cPChange = nil end
+  cPChange:resolve()
   log("\n")
 end
 
@@ -814,14 +755,14 @@ local options = {
   },
 }
 
-AceConfig:RegisterOptionsTable("PrimalAnticipation", options)
+AceConfig:RegisterOptionsTable("FeralComboPoints", options)
 
-AceConfigDialog:SetDefaultSize("PrimalAnticipation", 480, 360)
+AceConfigDialog:SetDefaultSize("FeralComboPoints", 480, 360)
 
 local function toggleOptionsUI()
   if optionsFrame then return end
   optionsFrame = AceGUI:Create("Frame")
-  optionsFrame:SetTitle("PrimalAnticipation")
+  optionsFrame:SetTitle("FeralComboPoints-v" .. _G.GetAddOnMetadata("FeralComboPoints", "Version"))
   optionsFrame:SetCallback("OnClose", function(widget)
     AceGUI:Release(widget)
     optionsFrame = nil
@@ -835,7 +776,7 @@ local function toggleOptionsUI()
   optionsFrameTabGroup:SetTabs({
     { text = "Options", value = "options" },
     { text = "Errors", value = "errors" },
-    { text = "Log", value = "log" }, -- TODO.
+    { text = "Log", value = "log", disabled = not db.global.log },
   })
   optionsFrameTabGroup:SetCallback("OnGroupSelected", function(container, event, group)
     container:ReleaseChildren() -- ...
@@ -843,7 +784,7 @@ local function toggleOptionsUI()
     if group == "options" then
       container:SetLayout("Fill")
       local inlineGroup = AceGUI:Create("SimpleGroup")
-      AceConfigDialog:Open("PrimalAnticipation", inlineGroup)
+      AceConfigDialog:Open("FeralComboPoints", inlineGroup)
       container:AddChild(inlineGroup)
       container:DoLayout()
     elseif group == "errors" then
@@ -933,7 +874,7 @@ end
 ------------------------------------------------------------------------------------------------------------------------
 
 -- http://www.wowace.com/addons/ace3/pages/api/ace-addon-3-0/
-function PrimalAnticipation:OnInitialize()
+function FeralComboPoints:OnInitialize()
   _G.assert(_G.MAX_COMBO_POINTS and _G.MAX_COMBO_POINTS == 5)
 
   do -- http://www.wowace.com/addons/ace3/pages/api/ace-db-3-0/
@@ -945,7 +886,7 @@ function PrimalAnticipation:OnInitialize()
         errors = {},
       },
     }
-    self.db = _G.LibStub("AceDB-3.0"):New("PrimalAnticipationDB", defaults, true)
+    self.db = _G.LibStub("AceDB-3.0"):New("FeralComboPointsDB", defaults, true)
   end
 
   if not (db.global.xOffset and db.global.yOffset) then
@@ -954,23 +895,39 @@ function PrimalAnticipation:OnInitialize()
     comboPointFrame:SetPoint("BOTTOMLEFT", db.global.xOffset, db.global.yOffset)
   end
 
-  self:RegisterChatCommand("primalanticipation", toggleOptionsUI)
-  self:RegisterChatCommand("pa", toggleOptionsUI)
+  if not db.global.lock then
+    comboPointFrame:EnableMouse(true)
+    comboPointFrame:SetMovable(true)
+    comboPointFrame:RegisterForDrag("LeftButton")
+  end
+
+  if not db.global.log then
+    log = function() end
+    logError = function() end
+  end
+
+  self:RegisterChatCommand("feralcombopoints", toggleOptionsUI)
+  self:RegisterChatCommand("fcp", toggleOptionsUI)
 end
 
 -- http://www.wowace.com/addons/ace3/pages/api/ace-addon-3-0/
-function PrimalAnticipation:OnEnable()
-  handlerFrame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
-  handlerFrame:RegisterUnitEvent("UNIT_COMBO_POINTS", "player")
-  --handlerFrame:RegisterUnitEvent("UNIT_SPELLCAST_SENT", "player")
-  handlerFrame:RegisterEvent("PLAYER_DEAD")
-  --handlerFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
-  handlerFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-  handlerFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
-  handlerFrame:RegisterEvent("PLAYER_FOCUS_CHANGED")
-  handlerFrame:RegisterEvent("UPDATE_MOUSEOVER_UNIT")
-  handlerFrame:RegisterEvent("ARENA_OPPONENT_UPDATE")
-  handlerFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+function FeralComboPoints:OnEnable()
+  if _G.select(2, _G.UnitClass("player")) ~= "DRUID" then
+    comboPointFrame:Hide()
+    _G.DisableAddOn("FeralComboPoints")
+  else
+    handlerFrame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
+    handlerFrame:RegisterUnitEvent("UNIT_COMBO_POINTS", "player")
+    --handlerFrame:RegisterUnitEvent("UNIT_SPELLCAST_SENT", "player")
+    handlerFrame:RegisterEvent("PLAYER_DEAD")
+    --handlerFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
+    handlerFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+    handlerFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
+    handlerFrame:RegisterEvent("PLAYER_FOCUS_CHANGED")
+    handlerFrame:RegisterEvent("UPDATE_MOUSEOVER_UNIT")
+    handlerFrame:RegisterEvent("ARENA_OPPONENT_UPDATE")
+    handlerFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+  end
 end
 
 -- vim: tw=120 sw=2 et
