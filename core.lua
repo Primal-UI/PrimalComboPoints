@@ -468,15 +468,17 @@ function handlerFrame:COMBAT_LOG_EVENT_UNFILTERED(timestamp, subEvent, _, source
         cPChange = ComboPointsChange:new()
       end
       cPChange:set("spellId", spellId)
+      cPChange.critical = cPChange.critical or (critical and true or false)
       if not cPChange[subEvent] then
-        cPChange[subEvent] = _G.GetTime()
+        cPChange:set(subEvent, _G.GetTime())
         _G.C_Timer.After(.001, function()
-          log("Timer expired")
-          cPChange:resolve()
-          log("\n")
+          if cPChange then
+            log("Timer expired")
+            cPChange:resolve()
+            log("\n")
+          end
         end)
       end
-      cPChange.critical = cPChange.critical or (critical and true or false)
       log("\n")
 
     elseif ferociousBite[spellId] or maim[spellId] then
