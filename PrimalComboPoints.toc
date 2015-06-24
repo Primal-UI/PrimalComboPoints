@@ -1,10 +1,10 @@
-## Interface: 60000
-## Title: PrimalComboPoints
-## Notes: Combo Point AddOn written for an unreleased UI for Feral Druids.
+## Interface: 60200
+## Title: |cffff7d0aPrimalComboPoints|r
+## Notes: Combo Point AddOn. Component of PrimalUI.
 ## Dependencies:
 ## OptionalDeps:
-## Author: meribold (Lukas Waymann)
-## Version: 1.0
+## Author: meribold
+## Version: 1.0.1
 ## SavedVariables: PrimalComboPointsDB
 ## SavedVariablesPerCharacter:
 
