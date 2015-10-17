@@ -1,3 +1,5 @@
+local addonName, addon = ...
+
 --PrimalComboPoints = setmetatable({}, { __index = _G })
 PrimalComboPoints = LibStub("AceAddon-3.0"):NewAddon("PrimalComboPoints", "AceConsole-3.0")
 --setmetatable(PrimalComboPoints, { __index = _G })
@@ -194,4 +196,4 @@ function PrimalComboPoints:OnEnable()
   handlerFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 end
 
--- vim: tw=120 sw=2 et
+-- vim: tw=120 sts=2 sw=2 et
