@@ -98,8 +98,12 @@ handlerFrame:SetScript("OnEvent", function(self, event, ...)
 end)
 
 function handlerFrame:UNIT_POWER(unit, arg2)
-  _G.assert(unit == "player")
-if arg2 ~= "COMBO_POINTS" then return end -- Skip update, as it isn't a Combo Point-related notification
+
+	if unit ~= "player" -- Not related to the player's character
+	or arg2 ~= "COMBO_POINTS" -- Not a Combo Point-related event
+	then -- Skip update, as it isn't a relevant notification
+		return
+	end 
 
   local newCP = _G.UnitPower("player", 4)
 
