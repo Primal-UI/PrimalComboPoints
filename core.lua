@@ -97,9 +97,13 @@ handlerFrame:SetScript("OnEvent", function(self, event, ...)
   return self[event](self, ...)
 end)
 
-function handlerFrame:UNIT_COMBO_POINTS(unit, arg2)
-  _G.assert(unit == "player")
-  _G.assert(arg2 == nil)
+function handlerFrame:UNIT_POWER(unit, arg2)
+
+	if unit ~= "player" -- Not related to the player's character
+	or arg2 ~= "COMBO_POINTS" -- Not a Combo Point-related event
+	then -- Skip update, as it isn't a relevant notification
+		return
+	end 
 
   local newCP = _G.UnitPower("player", 4)
 
@@ -192,7 +196,7 @@ end
 
 -- http://www.wowace.com/addons/ace3/pages/api/ace-addon-3-0/
 function PrimalComboPoints:OnEnable()
-  handlerFrame:RegisterUnitEvent("UNIT_COMBO_POINTS", "player")
+  handlerFrame:RegisterUnitEvent("UNIT_POWER", "player")
   handlerFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 end
 
