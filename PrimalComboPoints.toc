@@ -1,10 +1,10 @@
-## Interface: 60200
+## Interface: 70300
 ## Title: |cffff7d0aPrimalComboPoints|r
 ## Notes: Combo Point AddOn. Component of PrimalUI.
 ## Dependencies:
 ## OptionalDeps:
 ## Author: meribold
-## Version: 1.0.1
+## Version: 1.1
 ## SavedVariables: PrimalComboPointsDB
 ## SavedVariablesPerCharacter:
 
